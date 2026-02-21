@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=OTelDb
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  jaeger:
+    image: jaegertracing/jaeger:latest
+    ports:
+      - "4317:4317"      # OTLP gRPC (traces, metrics, logs from your app)
+      - "16686:16686"    # Jaeger UI
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"      # Prometheus UI
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"      # Loki HTTP API
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "9092:9092"      # External access
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_LISTENERS=PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"      # Kafka UI
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+    depends_on:
+      - kafka
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"      # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+      - jaeger
+      - loki
+
+volumes:
+  pgdata:

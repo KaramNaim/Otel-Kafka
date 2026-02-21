@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="OTel.Api/OTel.Api.csproj" />
+  <Project Path="OTel.Application/OTel.Application.csproj" />
+  <Project Path="OTel.Domain/OTel.Domain.csproj" />
+  <Project Path="OTel.Infrastructure/OTel.Infrastructure.csproj" />
+</Solution>
