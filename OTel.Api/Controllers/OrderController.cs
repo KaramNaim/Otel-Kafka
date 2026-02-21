@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using OTel.Application.DTO.Order;
@@ -13,11 +14,13 @@ public class OrderController : ControllerBase
 {
     private readonly IOrderService _orderService;
     private readonly IValidator<CreateOrderDto> _createValidator;
+    private readonly IEventProducer _eventProducer;
 
-    public OrderController(IOrderService orderService, IValidator<CreateOrderDto> createValidator)
+    public OrderController(IOrderService orderService, IValidator<CreateOrderDto> createValidator, IEventProducer eventProducer)
     {
         _orderService = orderService;
         _createValidator = createValidator;
+        _eventProducer = eventProducer;
     }
 
     [HttpGet]
@@ -51,5 +54,60 @@ public class OrderController : ControllerBase
         }
 
         return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result);
+    }
+
+    /// <summary>
+    /// Publishes a burst of Kafka events to stress test the messaging pipeline.
+    /// Does NOT create real orders — only publishes synthetic events to Kafka.
+    /// </summary>
+    [HttpPost("stress/{count:int}")]
+    public async Task<IActionResult> Stress(int count, [FromQuery] int parallelism = 10)
+    {
+        if (count is < 1 or > 100_000)
+            return BadRequest("Count must be between 1 and 100,000.");
+
+        parallelism = Math.Clamp(parallelism, 1, 100);
+
+        var sw = Stopwatch.StartNew();
+        var succeeded = 0;
+        var failed = 0;
+
+        await Parallel.ForEachAsync(
+            Enumerable.Range(1, count),
+            new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+            async (i, ct) =>
+            {
+                try
+                {
+                    var evt = new Domain.Events.OrderCreatedEvent
+                    {
+                        OrderId = -i,
+                        ProductId = 0,
+                        ProductName = "StressTest",
+                        Quantity = 1,
+                        TotalPrice = 0,
+                        CreatedOn = DateTime.UtcNow
+                    };
+
+                    await _eventProducer.ProduceAsync("order-events", null!, evt, ct);
+                    Interlocked.Increment(ref succeeded);
+                }
+                catch
+                {
+                    Interlocked.Increment(ref failed);
+                }
+            });
+
+        sw.Stop();
+
+        return Ok(new
+        {
+            TotalMessages = count,
+            Succeeded = succeeded,
+            Failed = failed,
+            Parallelism = parallelism,
+            ElapsedMs = sw.ElapsedMilliseconds,
+            MessagesPerSecond = count / Math.Max(sw.Elapsed.TotalSeconds, 0.001)
+        });
     }
 }
